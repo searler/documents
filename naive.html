@@ -1,0 +1,273 @@
+<htmL>
+<head>
+  <title>Some naive JDBC performance issues</title>
+  <style type="text/css">
+      div {width:500px}
+  </style>
+</head>
+<body>
+<h1 align ="center">Some naive JDBC performance issues</h1>
+<h2>Introduction</h2>
+<div>
+I recently encountered some data migration code that followed what might be called a "naive"
+approach. The magnitude of the resultant performance impact is interesting. Naive code has the
+following characteristics:</div>
+<ul>
+  <li>Concatenation of Strings</li>
+  <li>Ignoring exceptions</li>
+  <li>Failing to clean database resources</l1>
+  <li>Constructing individual insert statements</li>
+  <li>Using auto-commit</li>
+</ul>
+<h2>Inserting</h2>
+<div>
+I constructed representative code for the following 3 cases:</div>
+<ul>
+  <li>Naive code</li>
+  <li>Naive code, committing after every batch of 100 updates</li>
+  <li>Prepared statement, committing after every batch of 100 updates</li>
+</ul>
+<div>
+The code was then executed against Postgresql 7.1 and IBM DB2 7.2 (using the Java 2 drivers).
+The results are reported relative to the best result.</div>
+<table>
+  <th>Code</th><th>Postgresql</th><th>DB2</th>
+
+
+  <tr>
+    <td>Naive, auto commit</td>
+    <td align="right">5</td>
+    <td align="right">22</td>
+  </tr>
+  <tr>
+    <td>Naive, batched commit</td>
+    <td align="right">2</td>
+    <td align="right">8</td>
+  </tr>
+  <tr>
+    <td>Prepared</td>
+    <td align="right">1.6</td>
+    <td align="right">1</td>
+  </tr>
+
+</table>
+
+<div>The results are pretty much as would be expected. The only surprise is the 4x
+difference between DB2 and Postgresql for the naive code. Presumably, DB2 has a
+greater statement setup overhead because of its more sophisticated query planner.</div>
+<div>The String concatenations increase the execution time by 5% (assuming batched commits)</div>
+<h2>Queries</h2>
+<div>The migration code also performed a programmatic "outer join" by explicitly retrieving
+data from other tables during the normal per (master) row processing. It was not feasible to directly
+express these outer joins in the SQL query, making this a good design. Unfortunately, it was
+implemented by creating a new query for each row to be retrieved. An alternative design
+uses a single query to retrieve all the candidate rows. By ordering these rows and the
+master rows in the same order (ie by primary and foreign key, respectively) a simple
+matching algorithm can be used.</div>
+
+<table>
+  <th>Code</th><th>Postgresql</th><th>DB2</th>
+  <tr>
+    <td>Naive</td>
+    <td align="right">290</td>
+    <td align="right">180</td>
+  </tr>
+  <tr>
+    <td>Matching</td>
+    <td align="right">2</td>
+    <td align="right">1</td>
+  </tr>
+</table>
+<div>The results are as expected. The naive individual query approach would only
+be more efficient if less than 1% of the master records needed a join and the single
+query could not be written to return only those rows. </div>
+<h2>PreparedStatement Queries</h2>
+<div>The naive query above used a fully dynamic query. If only the parameters of the query vary then 
+a PreparedStatement can be used.<div>
+<table>
+  <th>Code</th><th>Postgresql</th><th>DB2</th>
+  <tr>
+    <td>Fully Dynamic</td>
+    <td align="right">2</td>
+    <td align="right">6</td>
+  </tr>
+  <tr>
+    <td>Prepared</td>
+    <td align="right">1.5</td>
+    <td align="right">1</td>
+  </tr>
+</table>
+<h2>Complexity</h2>
+<div>It might be felt that a PreparedStatement is more complex. A comparison of the code
+indicates that this is false. The PreparedStatement code does not require the
+conversions to strings, escaping of strings or the additional SQL syntax
+elements.</div>
+<pre>
+//Naive code using string concatenation
+String sql = "insert into speed(id,name,type,value) values(";
+sql += Integer.toString(i) + ',';
+name = name.replaceAll("'", "''");
+sql += "'" + name + "',";
+sql += "'AA',";
+sql +=  1234.56;
+sql += ')';
+statement.execute(sql);
+</pre>
+<pre>
+//Naive code using StringBuffer
+name = name.replaceAll("'", "''");
+StringBuffer sql = new StringBuffer(512);
+sql.append("insert into speed(id,name,type,value) values(");
+sql.append(Integer.toString(i));
+sql.append(",'");
+sql.append(name);
+sql.append("','");
+sql.append("AA");
+sql.append("',");
+sql.append(Double.toString(1234.56));
+sql.append(")");
+statement.execute(sql.toString());
+</pre>
+<pre>
+//PreparedStatement
+PreparedStatement prepared = connection.prepareStatement(
+       "insert into speed(id,name,type,value) values(?,?,?,?)");
+prepared.setInt(1, i);
+prepared.setString(2,name);
+prepared.setString(3,"AA");
+prepared.setDouble(4, 1234.5);
+prepared.execute();
+</pre>
+<h2>Code</h2>
+<h3>Table</h3>
+<pre>         Table "speed"
+ Column |         Type
+--------+----------------------
+ id     | integer
+ name   | character varying(30)
+ type   | character(2)
+ value  | double precision
+</pre>
+<h3>Naive</h3>
+<pre>
+import java.sql.*;
+
+public class Speed {
+    private final static int LOOP=1000;
+
+    public static void main(String[] args){
+        try{
+           Class.forName("org.postgresql.Driver");
+            Connection connection = java.sql.DriverManager.getConnection("jdbc:postgresql:database","user","password");
+          //  Class.forName("COM.ibm.db2.jdbc.app.DB2Driver");
+           // Connection connection = java.sql.DriverManager.getConnection("jdbc:db2:datbase","user","password");
+
+            Statement statement = connection.createStatement();
+            statement.execute("delete from speed");
+           connection.setAutoCommit(false);
+            long start = System.currentTimeMillis();
+            for(int i =0;i&lt;LOOP;i++){
+               /* String sql = "insert into speed(id,name,type,value) values(";
+                sql += Integer.toString(i) + ',';
+                String name = "name's" + i;
+                name = name.replaceAll("'", "''");
+                sql += "'" + name + "',";
+                sql += "'AA',";
+                sql += 1234.56;
+                sql += ')'; */
+                String name = "name's" + i;
+                name = name.replaceAll("'", "''");
+                StringBuffer sql = new StringBuffer(512);
+                sql.append("insert into speed(id,name,type,value) values(");
+                sql.append(Integer.toString(i));
+                sql.append(",'");
+                sql.append(name);
+                sql.append("','");
+                sql.append("AA");
+                sql.append("',");
+                sql.append(Double.toString(1234.56));
+                sql.append(")");
+                statement.execute(sql.toString());
+               if(i%100 == 0)
+                  connection.commit();
+            }
+            connection.commit();
+
+
+            System.out.println(((float)(System.currentTimeMillis() - start))/LOOP);
+            start = System.currentTimeMillis();
+            for(int i = 0; i &lt;LOOP; i++){
+                ResultSet result = statement.executeQuery("select type from speed where id=" + i);
+                result.next();
+                String code = result.getString(1);
+                result.close();
+            }
+            System.out.println(((float)(System.currentTimeMillis() - start))/LOOP);
+            connection.commit();
+            connection.close();
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+
+}
+
+</pre>
+<h3>Realistic</h3>
+<pre>
+import java.sql.*;
+
+public class Prepared {
+    private final static int LOOP=1000;
+
+
+    public static void main(String[] args){
+        try{
+            //Class.forName("org.postgresql.Driver");
+          //  Connection connection = java.sql.DriverManager.getConnection("jdbc:postgresql:database","user","password");
+            Class.forName("COM.ibm.db2.jdbc.app.DB2Driver");
+            Connection connection = java.sql.DriverManager.getConnection("jdbc:db2:database","user","password");
+            Statement statement = connection.createStatement();
+            statement.execute("delete from speed");
+            connection.setAutoCommit(false);
+
+            PreparedStatement prepared = connection.prepareStatement(
+            "insert into speed(id,name,type,value) values(?,?,?,?)");
+
+            long start = System.currentTimeMillis();
+            for(int i =0;i&lt;LOOP;i++){
+                String name = "name's" + i;
+                prepared.setInt(1, i);
+                prepared.setString(2,name);
+                prepared.setString(3,"AA");
+                prepared.setDouble(4, 1234.5);
+                prepared.execute();
+                if(i%100 == 0)
+                    connection.commit();
+            }
+            connection.commit();
+            prepared.close();
+            
+            System.out.println(((float)(System.currentTimeMillis() - start))/LOOP);
+            start = System.currentTimeMillis();
+            ResultSet result = statement.executeQuery("select id,type from speed order by id");
+            while(result.next()){
+                int id = result.getInt(1);
+                String code = result.getString(2);
+            }
+            System.out.println(((float)(System.currentTimeMillis() - start))/LOOP);
+            statement.close();
+            connection.commit();
+            connection.close();
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+    
+}
+
+</pre>
+</body>
+</html>

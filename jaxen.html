@@ -1,0 +1,126 @@
+<html><head><meta content="text/html; charset=ISO-8859-1" http-equiv="Content-Type"><title>Using Jaxen and Jena to query RDF using XPath</title><meta name="generator" content="DocBook XSL Stylesheets V1.49"></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="article"><div class="titlepage"><div><h1 class="title"><a name="id2749359"></a>Using Jaxen and Jena to query RDF using XPath</h1></div><div><p class="copyright">Copyright © H Richard Searle 2002 </p></div><hr></div><div class="toc"><p><b>Table of Contents</b></p><dl><dt><a href="#id2798785">Overview</a></dt><dt><a href="#id2798842">Making XPath meaningful within an RDF model.</a></dt><dt><a href="#id2754216">Examples</a></dt><dt><a href="#id2752893">Performance and other issues</a></dt><dt><a href="#id2752932">Conclusion</a></dt></dl></div><div class="sect1"><div class="titlepage"><div><h2 class="title" style="clear: both"><a name="id2798785"></a>Overview</h2></div></div><p>The <a href="http://www.jaxen.org" target="_top">Jaxen</a> software
+    provides an XPath implementation that can be easily extended to query any
+    tree like data structure. The<a href="http://www.hpl.hp.com/semweb/jena-top.html" target="_top"> Jena</a> API is
+    widely used to manipulate <a href="http://www.w3.org/rdf" target="_top">RDF</a>
+    data. Combining the two provides a mechanism to query RDF data using
+    familiar <a href="http://www.w3.org/TR/xpath" target="_top">XPath</a>
+    expressions. The <a href="http://groups.yahoo.com/group/rdfpath" target="_top">RDFPath</a>
+    is intended to provide this functionality but has not yet (as far I can
+    determine) produced any software.</p></div><div class="sect1"><div class="titlepage"><div><h2 class="title" style="clear: both"><a name="id2798842"></a>Making XPath meaningful within an RDF model.</h2></div></div><p>XPath is intended to traverse a tree structure of nodes. A RDF model
+    is a directed, cylic graph in which both the nodes and the arcs must be
+    considered. The trick is to map the RDF graph into a form that is usable
+    by Jaxen and produces useful results from an XPath query. It turns out
+    that there is no single best mapping. </p><p>The id() function has an obvious correlation with the uri of a
+    Resource and can be used to directly and efficiently reference a
+    particular Resource. The node is mapped to the returned Resource so that
+    any of the Statements of this resource can be referenced in a natural way
+    and its ancestors can be referenced. </p><p>The entire Model is mapped to the document element, but with a node
+    for each Resource that is a subject of a statement. This violates the XML
+    info model but Jaxen is sufficiently robust to handle this situation.
+    Alternatively, the mapping could use a node per statement. This would
+    reduce performance and make it impossible to directly return the Resource
+    that matches some predicate. </p><p>The children of a Resource are those Statements that have the
+    Resource as a subject, ensuring that the complete statement is made
+    available. The name of the child name is the uri of the Statement
+    Property, allowing a natural navigation through the graph. The string
+    value of the child is the value of the Literal or the uri of the object
+    Resource, allowing predicates to be used.</p><p>The children of a Statement are those statements whose subjects are
+    its object. </p><p>The parent of a Statement is its subject. The parent of a Resource
+    are those Resources that are subjects of statements whose object is the
+    Resource.</p></div><div class="sect1"><div class="titlepage"><div><h2 class="title" style="clear: both"><a name="id2754216"></a>Examples</h2></div></div><p>Consider the following example model, based on the Jena
+    &quot;sample1&quot; code. The N3 serialization is used since it is easier to
+    read.<pre class="programlisting">@prefix log:    &lt;http://www.w3.org/2000/10/swap/log#&gt; .
+@prefix rdfs:   &lt;http://www.w3.org/2000/01/rdf-schema#&gt; .
+@prefix daml:   &lt;http://www.daml.org/2001/03/daml+oil#&gt; .
+@prefix rdf:    &lt;http://www.w3.org/1999/02/22-rdf-syntax-ns#&gt; .
+@prefix :       &lt;#&gt; .
+&lt;album2&gt;
+      a     &lt;http://aldabaran.hpl.hp.com/indecs/Work&gt; .
+&lt;album&gt;
+      a     &lt;http://aldabaran.hpl.hp.com/indecs/Work&gt; .
+&lt;person&gt;
+      a     &lt;http://aldabaran.hpl.hp.com/hpps/Person&gt; ;
+      &lt;http://aldabaran.hpl.hp.com/hpps/ratings&gt;
+            [ rdf:_1
+                    [ a     &lt;http://aldabaran.hpl.hp.com/hpps/Rating&gt; ;
+                      rdf:value
+                            &quot;0.75&quot; ;
+                      &lt;http://aldabaran.hpl.hp.com/hpps/about&gt;
+                            &lt;album&gt; ] ;
+              a     rdf:Bag ] .
+&lt;person2&gt;
+      a     &lt;http://aldabaran.hpl.hp.com/hpps/Person&gt; ;
+      rdf:value
+            &lt;album2&gt; ;
+      &lt;http://aldabaran.hpl.hp.com/hpps/ratings&gt;
+            [ rdf:_1
+                    [ a     &lt;http://aldabaran.hpl.hp.com/hpps/Rating&gt; ;
+                      rdf:value
+                            &quot;0.75&quot; ;
+                      &lt;http://aldabaran.hpl.hp.com/hpps/about&gt;
+                            &lt;album&gt; ] ;
+              a     rdf:Bag ;
+              rdf:_2
+                    [ a     &lt;http://aldabaran.hpl.hp.com/hpps/Rating&gt; ;
+                      rdf:value
+                            &quot;0.5&quot; ;
+                      &lt;http://aldabaran.hpl.hp.com/hpps/about&gt;
+                            &lt;album2&gt; ] ] .</pre></p><p>The first example lists all statements that contain the
+    http://www.w3.org/1999/02/22-rdf-syntax-ns#value property. </p><pre class="programlisting"> //rdf:value
+[anon:c3c749:f198f9309a:-7fed, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Literal&lt;0.5&gt;]
+[anon:c3c749:f198f9309a:-8000, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Literal&lt;0.75&gt;]
+[anon:c3c749:f198f9309a:-7ff3, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Literal&lt;0.75&gt;]
+[person2, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Resource&lt;album2&gt;]
+</pre><p>List all the resources that have a statement defining their value<pre class="programlisting">*[rdf:value]
+anon:c3c749:f199a349c8:-7ff3
+anon:c3c749:f199a349c8:-8000
+person2
+anon:c3c749:f199a349c8:-7fed</pre></p><p>List all statements that assert that some Resource has a value of
+    0.5</p><pre class="programlisting">//rdf:value[.=0.5]
+[anon:c3c749:f198fd2232:-7fed, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Literal&lt;0.5&gt;]</pre><p>List all statements that assert that some Resource has a value that
+    references the resource whose uri is &quot;album2&quot;</p><pre class="programlisting">//rdf:value[.='album2']
+[person2, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Resource&lt;album2&gt;]</pre><p>List the resource of type Person that makes any assertions for the
+    &quot;album2&quot; resource. Note that the Person uri needs to be fully
+    specified.</p><pre class="programlisting">/*[rdf:type='http://aldabaran.hpl.hp.com/hpps/Person' and descendant::hp:about='album2']
+person2</pre><p>List all the rating values provided for &quot;album&quot;.</p><pre class="programlisting">/*[hp:about='album']/rdf:value
+[anon:c3c749:f19911374b:-8000, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Literal&lt;0.75&gt;]
+[anon:c3c749:f19911374b:-7ff3, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Literal&lt;0.75&gt;]
+</pre><p>List the people who made an assertion on &quot;album2&quot;. This
+    query assumes that the person resource is two statements &quot;back&quot; in
+    the graph and that no other resources at that distance will make
+    assertions on &quot;album2&quot;.</p><pre class="programlisting">/*[hp:about='album2']/../..
+person2</pre><p>A more reliable formulation of the query.</p><pre class="programlisting">/*[hp:about='album2']/ancestor::*[rdf:type='http://aldabaran.hpl.hp.com/hpps/Person']
+person2</pre><p>List all the assertions for &quot;person&quot;</p><pre class="programlisting">id('person')/*
+[person, http://www.w3.org/1999/02/22-rdf-syntax-ns#type, Resource&lt;http://aldabaran.hpl.hp.com/hpps/Person&gt;]
+[person, http://aldabaran.hpl.hp.com/hpps/ratings, Resource&lt;anon:c3c749:f19981ea0a:-7ffa&gt;]</pre><p>List all the assertions reachable from &quot;person&quot;</p><pre class="programlisting">id('person')//*
+[person, http://www.w3.org/1999/02/22-rdf-syntax-ns#type, Resource&lt;http://aldabaran.hpl.hp.com/hpps/Person&gt;]
+[person, http://aldabaran.hpl.hp.com/hpps/ratings, Resource&lt;anon:c3c749:f19982dcbe:-7ffa&gt;]
+[anon:c3c749:f19982dcbe:-7ffa, http://www.w3.org/1999/02/22-rdf-syntax-ns#type, Resource&lt;http://www.w3.org/1999/02/22-rdf-syntax-ns#Bag&gt;]
+[anon:c3c749:f19982dcbe:-7ffa, http://www.w3.org/1999/02/22-rdf-syntax-ns#_1, Resource&lt;anon:c3c749:f19982dcbe:-8000&gt;]
+[anon:c3c749:f19982dcbe:-8000, http://www.w3.org/1999/02/22-rdf-syntax-ns#type, Resource&lt;http://aldabaran.hpl.hp.com/hpps/Rating&gt;]
+[anon:c3c749:f19982dcbe:-8000, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Literal&lt;0.75&gt;]
+[anon:c3c749:f19982dcbe:-8000, http://aldabaran.hpl.hp.com/hpps/about, Resource&lt;album&gt;]
+[album, http://www.w3.org/1999/02/22-rdf-syntax-ns#type, Resource&lt;http://aldabaran.hpl.hp.com/indecs/Work&gt;]</pre><p>List the Resources whose asserts lead to &quot;album2&quot;.</p><pre class="programlisting">id('album2')/ancestor::*
+anon:c3c749:f1998a14d3:-7fed
+person2
+anon:c3c749:f1998a14d3:-7ff5</pre><p>List the statements of the above Resources</p><pre class="programlisting">id('album2')/ancestor::*/*
+[anon:c3c749:f1998485e7:-7fed, http://www.w3.org/1999/02/22-rdf-syntax-ns#type, Resource&lt;http://aldabaran.hpl.hp.com/hpps/Rating&gt;]
+[anon:c3c749:f1998485e7:-7fed, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Literal&lt;0.5&gt;]
+[anon:c3c749:f1998485e7:-7fed, http://aldabaran.hpl.hp.com/hpps/about, Resource&lt;album2&gt;]
+[person2, http://www.w3.org/1999/02/22-rdf-syntax-ns#type, Resource&lt;http://aldabaran.hpl.hp.com/hpps/Person&gt;]
+[person2, http://www.w3.org/1999/02/22-rdf-syntax-ns#value, Resource&lt;album2&gt;]
+[person2, http://aldabaran.hpl.hp.com/hpps/ratings, Resource&lt;anon:c3c749:f1998485e7:-7ff5&gt;]
+[anon:c3c749:f1998485e7:-7ff5, http://www.w3.org/1999/02/22-rdf-syntax-ns#type, Resource&lt;http://www.w3.org/1999/02/22-rdf-syntax-ns#Bag&gt;]
+[anon:c3c749:f1998485e7:-7ff5, http://www.w3.org/1999/02/22-rdf-syntax-ns#_1, Resource&lt;anon:c3c749:f1998485e7:-7ff3&gt;]
+[anon:c3c749:f1998485e7:-7ff5, http://www.w3.org/1999/02/22-rdf-syntax-ns#_2, Resource&lt;anon:c3c749:f1998485e7:-7fed&gt;]</pre></div><div class="sect1"><div class="titlepage"><div><h2 class="title" style="clear: both"><a name="id2752893"></a>Performance and other issues</h2></div></div><p>An Xpath that traverses a cycle will cause Jaxen to fall into an
+    infinite recursion. The code could be extended to detect and break such
+    loops by tracking which resources have already been visited.</p><p>Any XPath that references the &quot;root&quot; node will examine every
+    statement in the model. This problem can be avoided by using id() to
+    specify a starting resource.</p><p>All XPath implementations will test only a single value at time (ie
+    either the element name or its value). This is inefficient when dealing
+    with RDF where two values (property and object) must usually be tested
+    together. </p></div><div class="sect1"><div class="titlepage"><div><h2 class="title" style="clear: both"><a name="id2752932"></a>Conclusion</h2></div></div><p>This code has poor performance on large models and cannot express
+    all possible queries against an RDF model. Nonetheless, it provides a
+    simple query mechanism that is useful for a wide range of purposes. It
+    also serves as an interesting illustration of the power of using the
+    correct abstraction in a software design. </p><p>The code is available <a href="jaxen.zip" target="_top">here</a></p></div></div></body></html>
